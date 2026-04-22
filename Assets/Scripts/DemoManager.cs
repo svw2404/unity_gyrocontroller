@@ -331,13 +331,15 @@ public class DemoManager : MonoBehaviour
             return;
         }
 
-        Rect area = new Rect(12f, 12f, 500f, 214f);
+        Rect area = new Rect(12f, 12f, 560f, 244f);
         GUI.Box(area, string.Empty);
 
         Rect labelRect = new Rect(area.x + 12f, area.y + 10f, area.width - 24f, area.height - 20f);
         string text =
             "Controller Demo\n" +
             $"Active Input: {inputRouter.ActiveInputLabel}   Motion: {inputRouter.MotionMagnitude:0.00}\n" +
+            $"Active Device: {inputRouter.ActiveDeviceLabel}\n" +
+            $"Connected Pad: {inputRouter.ConnectedGamepadLabel}\n" +
             $"Object Input: ({inputRouter.ObjectRotation.x:0.00}, {inputRouter.ObjectRotation.y:0.00})\n" +
             $"Target: {(rotatingObject != null ? rotatingObject.name : "None")}   Camera: {(demoCamera != null ? demoCamera.name : "None")}\n" +
             "Object Rotate: Arrow Keys / Gamepad Left Stick / Face Buttons\n" +

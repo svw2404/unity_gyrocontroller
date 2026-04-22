@@ -1,5 +1,7 @@
+using System;
 using UnityEngine;
 using UnityEngine.InputSystem;
+using UnityEngine.InputSystem.DualShock;
 
 [DefaultExecutionOrder(-100)]
 [DisallowMultipleComponent]
@@ -20,6 +22,14 @@ public class InputRouter : MonoBehaviour
     [SerializeField, Range(0f, 0.5f)] private float stickDeadzone = 0.15f;
     [SerializeField, Range(0f, 0.25f)] private float triggerDeadzone = 0.1f;
 
+    [Header("Gamepad Tuning")]
+    [SerializeField, Min(0f)] private float gamepadStickRotationScale = 1f;
+    [SerializeField, Min(0f)] private float gamepadFaceButtonRotationScale = 0.85f;
+    [SerializeField, Min(0f)] private float gamepadTiltScale = 0.9f;
+    [SerializeField, Min(0f)] private float gamepadDpadMoveScale = 0.85f;
+    [SerializeField, Min(0f)] private float gamepadShoulderMoveScale = 0.8f;
+    [SerializeField, Min(0f)] private float gamepadTriggerMoveScale = 1f;
+
     private InputAction keyboardObjectRotateAction;
     private InputAction gamepadObjectRotateAction;
     private InputAction gamepadObjectRotateButtonsAction;
@@ -37,6 +47,10 @@ public class InputRouter : MonoBehaviour
     public float MotionMagnitude { get; private set; }
     public ActiveInputMode ActiveInput { get; private set; }
     public string ActiveInputLabel => ActiveInput == ActiveInputMode.Gamepad ? "Gamepad" : "Keyboard / Mouse";
+    public string ActiveDeviceLabel { get; private set; } = "Keyboard / Mouse";
+    public string ConnectedGamepadLabel { get; private set; } = "No gamepad detected";
+    public bool IsGamepadConnected { get; private set; }
+    public bool IsPlayStationStyleGamepadConnected { get; private set; }
 
     private void Awake()
     {
@@ -193,17 +207,25 @@ public class InputRouter : MonoBehaviour
 
     private void UpdateOutputs()
     {
+        UpdateConnectedGamepadStatus(GetConnectedGamepad());
+
         Vector2 keyboardRotate = keyboardObjectRotateAction.ReadValue<Vector2>();
-        Vector2 gamepadRotateStick = ApplyDeadzone(gamepadObjectRotateAction.ReadValue<Vector2>());
-        Vector2 gamepadRotateButtons = gamepadObjectRotateButtonsAction.ReadValue<Vector2>();
+        Vector2 gamepadRotateStick = ScaleVector(
+            ApplyDeadzone(gamepadObjectRotateAction.ReadValue<Vector2>()),
+            gamepadStickRotationScale);
+        Vector2 gamepadRotateButtons = ScaleVector(
+            gamepadObjectRotateButtonsAction.ReadValue<Vector2>(),
+            gamepadFaceButtonRotationScale);
         Vector2 gamepadRotate = CombineNormalized(gamepadRotateStick, gamepadRotateButtons);
         ObjectRotation = CombineNormalized(keyboardRotate, gamepadRotate);
 
         Vector2 keyboardMove = keyboardMoveAction.ReadValue<Vector2>();
-        Vector2 gamepadMovePad = gamepadMoveAction.ReadValue<Vector2>();
+        Vector2 gamepadMovePad = ScaleVector(
+            gamepadMoveAction.ReadValue<Vector2>(),
+            gamepadDpadMoveScale);
         Vector2 gamepadMoveButtons = new Vector2(
-            gamepadMoveLateralButtonsAction.ReadValue<float>(),
-            ApplyTriggerDeadzone(gamepadMoveDepthButtonsAction.ReadValue<float>()));
+            gamepadMoveLateralButtonsAction.ReadValue<float>() * gamepadShoulderMoveScale,
+            ApplyTriggerDeadzone(gamepadMoveDepthButtonsAction.ReadValue<float>()) * gamepadTriggerMoveScale);
         Vector2 gamepadMove = CombineNormalized(gamepadMovePad, gamepadMoveButtons);
         CameraTranslation = CombineNormalized(keyboardMove, gamepadMove);
 
@@ -213,7 +235,9 @@ public class InputRouter : MonoBehaviour
             mouseTilt = NormalizeMouse(mouseTiltAction.ReadValue<Vector2>());
         }
 
-        Vector2 gamepadTilt = ApplyDeadzone(gamepadTiltAction.ReadValue<Vector2>());
+        Vector2 gamepadTilt = ScaleVector(
+            ApplyDeadzone(gamepadTiltAction.ReadValue<Vector2>()),
+            gamepadTiltScale);
         Vector2 gyroTilt = ReadGyroTiltExtension();
         CameraTilt = CombineNormalized(mouseTilt, gamepadTilt, gyroTilt);
 
@@ -227,10 +251,16 @@ public class InputRouter : MonoBehaviour
         if (gamepadMagnitude > 0.001f)
         {
             ActiveInput = ActiveInputMode.Gamepad;
+            ActiveDeviceLabel = ConnectedGamepadLabel;
         }
         else if (keyboardMouseMagnitude > 0.001f)
         {
             ActiveInput = ActiveInputMode.KeyboardMouse;
+            ActiveDeviceLabel = mouseTilt.magnitude > 0.001f ? "Mouse + Keyboard" : "Keyboard";
+        }
+        else if (!IsGamepadConnected)
+        {
+            ActiveDeviceLabel = "Keyboard / Mouse";
         }
 
         MotionMagnitude = Mathf.Clamp01(
@@ -269,6 +299,11 @@ public class InputRouter : MonoBehaviour
         return Mathf.Sign(rawInput) * scaled;
     }
 
+    private static Vector2 ScaleVector(Vector2 input, float scale)
+    {
+        return Vector2.ClampMagnitude(input * scale, 1f);
+    }
+
     private static Vector2 CombineNormalized(Vector2 first, Vector2 second)
     {
         return Vector2.ClampMagnitude(first + second, 1f);
@@ -289,7 +324,73 @@ public class InputRouter : MonoBehaviour
         Cursor.visible = true;
     }
 
+    private Gamepad GetConnectedGamepad()
+    {
+        if (Gamepad.current != null)
+        {
+            return Gamepad.current;
+        }
+
+        if (DualShockGamepad.current != null)
+        {
+            return DualShockGamepad.current;
+        }
+
+        return Gamepad.all.Count > 0 ? Gamepad.all[0] : null;
+    }
+
+    private void UpdateConnectedGamepadStatus(Gamepad gamepad)
+    {
+        IsGamepadConnected = gamepad != null;
+        IsPlayStationStyleGamepadConnected = gamepad != null && IsPlayStationStyleGamepad(gamepad);
+        ConnectedGamepadLabel = FormatGamepadLabel(gamepad);
+    }
+
+    private string FormatGamepadLabel(Gamepad gamepad)
+    {
+        if (gamepad == null)
+        {
+            return "No gamepad detected";
+        }
+
+        string rawName = !string.IsNullOrWhiteSpace(gamepad.displayName)
+            ? gamepad.displayName
+            : gamepad.description.product;
+
+        if (string.IsNullOrWhiteSpace(rawName))
+        {
+            rawName = gamepad.layout;
+        }
+
+        if (IsPlayStationStyleGamepad(gamepad))
+        {
+            return $"PlayStation-style ({rawName})";
+        }
+
+        return rawName;
+    }
+
+    private bool IsPlayStationStyleGamepad(Gamepad gamepad)
+    {
+        if (gamepad is DualShockGamepad)
+        {
+            return true;
+        }
+
+        string deviceInfo = string.Concat(
+            gamepad.displayName, " ",
+            gamepad.description.product, " ",
+            gamepad.description.manufacturer, " ",
+            gamepad.layout);
+
+        return deviceInfo.IndexOf("playstation", StringComparison.OrdinalIgnoreCase) >= 0
+            || deviceInfo.IndexOf("dualshock", StringComparison.OrdinalIgnoreCase) >= 0
+            || deviceInfo.IndexOf("wireless controller", StringComparison.OrdinalIgnoreCase) >= 0
+            || deviceInfo.IndexOf("sony", StringComparison.OrdinalIgnoreCase) >= 0;
+    }
+
     // Future DualShock / DualSense gyro data should be merged here so CameraMover keeps consuming one clean tilt signal.
+    // For this prototype, keep gyro optional and isolated to the input layer.
     private Vector2 ReadGyroTiltExtension()
     {
         return Vector2.zero;
