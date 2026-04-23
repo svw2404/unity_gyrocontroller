@@ -17,9 +17,17 @@ public class ObjectRotator : MonoBehaviour
     [SerializeField] private bool clampPitch = false;
     [SerializeField] private Vector2 pitchLimits = new Vector2(-80f, 80f);
 
+    [Header("Phone Motion")]
+    [SerializeField] private bool phoneUsesDirectPose = true;
+    [SerializeField] private float phoneYawRange = 80f;
+    [SerializeField] private float phonePitchRange = 65f;
+    [SerializeField, Min(1f)] private float phonePoseSharpness = 10f;
+
     private Vector2 smoothedInput;
     private Vector2 inputVelocity;
     private Quaternion accumulatedRotation;
+    private Quaternion phoneNeutralRotation;
+    private bool wasUsingPhoneMotion;
 
     private void Reset()
     {
@@ -69,6 +77,34 @@ public class ObjectRotator : MonoBehaviour
             blendedInput.y = 0f;
         }
 
+        bool usingPhoneMotion = inputRouter.IsUsingPhoneMotion && phoneUsesDirectPose;
+        if (usingPhoneMotion)
+        {
+            if (!wasUsingPhoneMotion)
+            {
+                phoneNeutralRotation = transform.localRotation;
+                accumulatedRotation = transform.localRotation;
+            }
+
+            Quaternion targetRotation = phoneNeutralRotation *
+                Quaternion.Euler(
+                    -blendedInput.y * phonePitchRange,
+                    blendedInput.x * phoneYawRange,
+                    0f);
+
+            float blend = 1f - Mathf.Exp(-phonePoseSharpness * Time.deltaTime);
+            accumulatedRotation = Quaternion.Slerp(accumulatedRotation, targetRotation, blend);
+            transform.localRotation = accumulatedRotation;
+            wasUsingPhoneMotion = true;
+            return;
+        }
+
+        if (wasUsingPhoneMotion)
+        {
+            accumulatedRotation = transform.localRotation;
+            wasUsingPhoneMotion = false;
+        }
+
         float yawDelta = blendedInput.x * yawSpeed * Time.deltaTime;
         float pitchDelta = -blendedInput.y * pitchSpeed * Time.deltaTime;
 
@@ -88,10 +124,12 @@ public class ObjectRotator : MonoBehaviour
         SyncRotationFromTransform();
         smoothedInput = Vector2.zero;
         inputVelocity = Vector2.zero;
+        wasUsingPhoneMotion = false;
     }
 
     private void SyncRotationFromTransform()
     {
         accumulatedRotation = transform.localRotation;
+        phoneNeutralRotation = transform.localRotation;
     }
 }

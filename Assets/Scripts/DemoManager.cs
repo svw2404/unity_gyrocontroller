@@ -11,6 +11,8 @@ public class DemoManager : MonoBehaviour
     [SerializeField] private CameraMover cameraMover;
     [SerializeField] private Transform rotatingObject;
     [SerializeField] private ObjectRotator objectRotator;
+    [SerializeField] private DemoVisualFeedback demoVisualFeedback;
+    [SerializeField] private DemoParticleController demoParticleController;
 
     [Header("Bootstrap")]
     [SerializeField] private bool createCubeIfMissing = true;
@@ -36,6 +38,8 @@ public class DemoManager : MonoBehaviour
     [SerializeField] private bool enableResetShotShortcut = true;
     [SerializeField] private bool resetObjectRotationWithShot = true;
     [SerializeField] private bool showDebugOverlay = true;
+    [SerializeField] private Vector2 overlayScreenOffset = new Vector2(180f, 56f);
+    [SerializeField, Min(320f)] private float overlayMaxWidth = 560f;
 
     private GameObject demoFloor;
     private bool overlayVisible = true;
@@ -108,6 +112,16 @@ public class DemoManager : MonoBehaviour
             objectRotator = rotatingObject.GetComponent<ObjectRotator>();
         }
 
+        if (demoVisualFeedback == null && rotatingObject != null)
+        {
+            demoVisualFeedback = rotatingObject.GetComponent<DemoVisualFeedback>();
+        }
+
+        if (demoParticleController == null && rotatingObject != null)
+        {
+            demoParticleController = rotatingObject.GetComponentInChildren<DemoParticleController>();
+        }
+
         if (objectRotator == null)
         {
             objectRotator = FindAnyObjectByType<ObjectRotator>();
@@ -115,6 +129,16 @@ public class DemoManager : MonoBehaviour
             {
                 rotatingObject = objectRotator.transform;
             }
+        }
+
+        if (demoVisualFeedback == null)
+        {
+            demoVisualFeedback = FindAnyObjectByType<DemoVisualFeedback>();
+        }
+
+        if (demoParticleController == null)
+        {
+            demoParticleController = FindAnyObjectByType<DemoParticleController>();
         }
     }
 
@@ -161,6 +185,30 @@ public class DemoManager : MonoBehaviour
             if (objectRotator == null)
             {
                 objectRotator = rotatingObject.gameObject.AddComponent<ObjectRotator>();
+            }
+        }
+
+        if (rotatingObject != null && demoVisualFeedback == null)
+        {
+            demoVisualFeedback = rotatingObject.GetComponent<DemoVisualFeedback>();
+            if (demoVisualFeedback == null)
+            {
+                demoVisualFeedback = rotatingObject.gameObject.AddComponent<DemoVisualFeedback>();
+            }
+        }
+
+        if (rotatingObject != null && demoParticleController == null)
+        {
+            demoParticleController = rotatingObject.GetComponentInChildren<DemoParticleController>();
+            if (demoParticleController == null)
+            {
+                GameObject particleObject = new GameObject("Demo Particles");
+                particleObject.transform.SetParent(rotatingObject, false);
+                particleObject.transform.localPosition = Vector3.zero;
+                particleObject.transform.localRotation = Quaternion.identity;
+                particleObject.transform.localScale = Vector3.one;
+                particleObject.AddComponent<ParticleSystem>();
+                demoParticleController = particleObject.AddComponent<DemoParticleController>();
             }
         }
 
@@ -241,6 +289,17 @@ public class DemoManager : MonoBehaviour
         {
             cameraMover.SetInputRouter(inputRouter);
         }
+
+        if (demoVisualFeedback != null)
+        {
+            demoVisualFeedback.SetInputRouter(inputRouter);
+        }
+
+        if (demoParticleController != null)
+        {
+            demoParticleController.SetInputRouter(inputRouter);
+            demoParticleController.SetVisualFeedback(demoVisualFeedback);
+        }
     }
 
     private void ApplyPresentationLookIfNeeded()
@@ -273,7 +332,12 @@ public class DemoManager : MonoBehaviour
         Vector3 position = cubeSpawnPosition;
         float halfHeight = targetTransform.localScale.y * 0.5f;
 
-        Renderer targetRenderer = targetTransform.GetComponentInChildren<Renderer>();
+        Renderer targetRenderer = targetTransform.GetComponent<Renderer>();
+        if (targetRenderer == null)
+        {
+            targetRenderer = targetTransform.GetComponentInChildren<Renderer>();
+        }
+
         if (targetRenderer != null)
         {
             halfHeight = targetRenderer.bounds.extents.y;
@@ -331,22 +395,40 @@ public class DemoManager : MonoBehaviour
             return;
         }
 
-        Rect area = new Rect(12f, 12f, 560f, 244f);
+        float overlayScale = Mathf.Clamp(Mathf.Min(Screen.width / 1280f, Screen.height / 720f), 0.72f, 1f);
+        Matrix4x4 previousMatrix = GUI.matrix;
+        GUI.matrix = Matrix4x4.Scale(new Vector3(overlayScale, overlayScale, 1f));
+
+        float inverseScale = 1f / overlayScale;
+        float scaledScreenWidth = Screen.width * inverseScale;
+        float scaledScreenHeight = Screen.height * inverseScale;
+        float marginX = Mathf.Clamp(overlayScreenOffset.x, 8f, Mathf.Max(8f, scaledScreenWidth - 140f));
+        float marginY = Mathf.Clamp(overlayScreenOffset.y, 8f, Mathf.Max(8f, scaledScreenHeight - 120f));
+        float maxWidth = Mathf.Min(overlayMaxWidth, scaledScreenWidth - marginX - 16f);
+        Rect area = new Rect(marginX, marginY, maxWidth, 206f);
         GUI.Box(area, string.Empty);
 
-        Rect labelRect = new Rect(area.x + 12f, area.y + 10f, area.width - 24f, area.height - 20f);
+        GUIStyle labelStyle = new GUIStyle(GUI.skin.label)
+        {
+            fontSize = 12,
+            wordWrap = true,
+            richText = false
+        };
+
+        Rect labelRect = new Rect(area.x + 10f, area.y + 8f, area.width - 20f, area.height - 16f);
         string text =
             "Controller Demo\n" +
-            $"Active Input: {inputRouter.ActiveInputLabel}   Motion: {inputRouter.MotionMagnitude:0.00}\n" +
-            $"Active Device: {inputRouter.ActiveDeviceLabel}\n" +
-            $"Connected Pad: {inputRouter.ConnectedGamepadLabel}\n" +
-            $"Object Input: ({inputRouter.ObjectRotation.x:0.00}, {inputRouter.ObjectRotation.y:0.00})\n" +
-            $"Target: {(rotatingObject != null ? rotatingObject.name : "None")}   Camera: {(demoCamera != null ? demoCamera.name : "None")}\n" +
-            "Object Rotate: Arrow Keys / Gamepad Left Stick / Face Buttons\n" +
-            "Camera Tilt: Hold Right Mouse + Move / Gamepad Right Stick\n" +
-            "Camera Move: WASD / Gamepad D-Pad / L1-R1 / L2-R2\n" +
-            "Shortcuts: F reset shot, / toggle overlay";
+            $"Mode: {inputRouter.ConfiguredInputModeLabel}   Source: {inputRouter.CurrentInputModeLabel}\n" +
+            $"Device: {inputRouter.ActiveDeviceLabel}\n" +
+            $"Sensors: {inputRouter.MobileSensorLabel}\n" +
+            $"Phone Rotate: ({inputRouter.PhoneObjectRotation.x:0.00}, {inputRouter.PhoneObjectRotation.y:0.00})   Motion: {inputRouter.PhoneMotionMagnitude:0.00}\n" +
+            $"Object Input: ({inputRouter.ObjectRotation.x:0.00}, {inputRouter.ObjectRotation.y:0.00})   Visual: {(demoVisualFeedback != null ? demoVisualFeedback.CurrentIntensity : 0f):0.00}\n" +
+            "Phone: tilt iPhone to pose the cube\n" +
+            "Fallback Rotate: Arrow Keys / Left Stick / Face Buttons\n" +
+            "Fallback Camera: Right Mouse or Right Stick   Move: WASD / D-Pad / Shoulders / Triggers\n" +
+            "Shortcuts: F reset, / overlay";
 
-        GUI.Label(labelRect, text);
+        GUI.Label(labelRect, text, labelStyle);
+        GUI.matrix = previousMatrix;
     }
 }
