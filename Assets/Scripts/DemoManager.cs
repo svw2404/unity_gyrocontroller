@@ -13,9 +13,20 @@ public class DemoManager : MonoBehaviour
     [SerializeField] private ObjectRotator objectRotator;
     [SerializeField] private DemoVisualFeedback demoVisualFeedback;
     [SerializeField] private DemoParticleController demoParticleController;
+    [SerializeField] private HeroPlaceholderController heroPlaceholderController;
+    [SerializeField] private SongModeManager songModeManager;
+    [SerializeField] private CameraViewController cameraViewController;
+    [SerializeField] private MultiObjectController multiObjectController;
+    [SerializeField] private AudioReactiveDriver audioReactiveDriver;
+
+    [Header("Integration")]
+    [SerializeField] private bool preserveAssignedSceneLayout = true;
+    [SerializeField] private Transform particleCenter;
+    [SerializeField] private Transform orbitBallParent;
 
     [Header("Bootstrap")]
     [SerializeField] private bool createCubeIfMissing = true;
+    [SerializeField] private GameObject heroObjectPrefab;
     [SerializeField] private bool createFloorIfMissing = true;
     [SerializeField] private bool createDirectionalLightIfMissing = true;
     [SerializeField] private bool normalizeSceneForDemoOnPlay = true;
@@ -43,6 +54,10 @@ public class DemoManager : MonoBehaviour
 
     private GameObject demoFloor;
     private bool overlayVisible = true;
+    private bool createdFallbackHero;
+    private bool createdFallbackCamera;
+    private bool createdFallbackFloor;
+    private bool createdFallbackLight;
 
     private void Reset()
     {
@@ -100,6 +115,10 @@ public class DemoManager : MonoBehaviour
         if (cameraMover == null && demoCamera != null)
         {
             cameraMover = demoCamera.GetComponent<CameraMover>();
+            if (cameraMover == null)
+            {
+                cameraMover = FindAnyObjectByType<CameraMover>();
+            }
         }
 
         if (rotatingObject == null && objectRotator != null)
@@ -120,6 +139,40 @@ public class DemoManager : MonoBehaviour
         if (demoParticleController == null && rotatingObject != null)
         {
             demoParticleController = rotatingObject.GetComponentInChildren<DemoParticleController>();
+        }
+
+        if (particleCenter == null && rotatingObject != null)
+        {
+            particleCenter = rotatingObject;
+        }
+
+        if (heroPlaceholderController == null && rotatingObject != null)
+        {
+            heroPlaceholderController = rotatingObject.GetComponent<HeroPlaceholderController>();
+        }
+
+        if (songModeManager == null)
+        {
+            songModeManager = GetComponent<SongModeManager>();
+        }
+
+        if (cameraViewController == null && demoCamera != null)
+        {
+            cameraViewController = demoCamera.GetComponent<CameraViewController>();
+            if (cameraViewController == null)
+            {
+                cameraViewController = FindAnyObjectByType<CameraViewController>();
+            }
+        }
+
+        if (multiObjectController == null)
+        {
+            multiObjectController = GetComponent<MultiObjectController>();
+        }
+
+        if (audioReactiveDriver == null)
+        {
+            audioReactiveDriver = GetComponent<AudioReactiveDriver>();
         }
 
         if (objectRotator == null)
@@ -156,6 +209,7 @@ public class DemoManager : MonoBehaviour
             cameraObject.tag = "MainCamera";
             demoCamera = cameraObject.AddComponent<Camera>();
             cameraObject.AddComponent<AudioListener>();
+            createdFallbackCamera = true;
         }
         else if (Camera.main == null)
         {
@@ -167,16 +221,52 @@ public class DemoManager : MonoBehaviour
             cameraMover = demoCamera.GetComponent<CameraMover>();
             if (cameraMover == null)
             {
+                cameraMover = FindAnyObjectByType<CameraMover>();
+            }
+
+            if (cameraMover == null)
+            {
                 cameraMover = demoCamera.gameObject.AddComponent<CameraMover>();
+            }
+        }
+
+        if (cameraViewController == null)
+        {
+            cameraViewController = demoCamera.GetComponent<CameraViewController>();
+            if (cameraViewController == null)
+            {
+                cameraViewController = FindAnyObjectByType<CameraViewController>();
+            }
+
+            if (cameraViewController == null)
+            {
+                cameraViewController = demoCamera.gameObject.AddComponent<CameraViewController>();
             }
         }
 
         if (rotatingObject == null && createCubeIfMissing)
         {
-            GameObject cube = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            cube.name = "Demo Cube";
-            cube.transform.localScale = cubeScale;
-            rotatingObject = cube.transform;
+            GameObject heroObject = null;
+
+            if (heroObjectPrefab != null)
+            {
+                heroObject = Instantiate(heroObjectPrefab);
+                heroObject.name = heroObjectPrefab.name;
+            }
+            else
+            {
+                heroObject = CreateHeroPlaceholderObject();
+            }
+
+            if (heroObject == null)
+            {
+                heroObject = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                heroObject.name = "Demo Cube";
+                heroObject.transform.localScale = cubeScale;
+            }
+
+            rotatingObject = heroObject.transform;
+            createdFallbackHero = true;
         }
 
         if (rotatingObject != null && objectRotator == null)
@@ -212,7 +302,46 @@ public class DemoManager : MonoBehaviour
             }
         }
 
-        if (createFloorIfMissing)
+        if (rotatingObject != null && heroPlaceholderController == null)
+        {
+            heroPlaceholderController = rotatingObject.GetComponent<HeroPlaceholderController>();
+        }
+
+        if (particleCenter == null && rotatingObject != null)
+        {
+            particleCenter = rotatingObject;
+        }
+
+        if (audioReactiveDriver == null)
+        {
+            audioReactiveDriver = GetComponent<AudioReactiveDriver>();
+            if (audioReactiveDriver == null)
+            {
+                audioReactiveDriver = gameObject.AddComponent<AudioReactiveDriver>();
+            }
+        }
+
+        if (multiObjectController == null)
+        {
+            multiObjectController = GetComponent<MultiObjectController>();
+            if (multiObjectController == null)
+            {
+                multiObjectController = gameObject.AddComponent<MultiObjectController>();
+            }
+        }
+
+        if (songModeManager == null)
+        {
+            songModeManager = GetComponent<SongModeManager>();
+            if (songModeManager == null)
+            {
+                songModeManager = gameObject.AddComponent<SongModeManager>();
+            }
+        }
+
+        bool allowFallbackSceneBootstrap = !preserveAssignedSceneLayout || createdFallbackHero || createdFallbackCamera;
+
+        if (createFloorIfMissing && allowFallbackSceneBootstrap)
         {
             demoFloor = GameObject.Find("Demo Floor");
             if (demoFloor == null)
@@ -220,23 +349,25 @@ public class DemoManager : MonoBehaviour
                 demoFloor = GameObject.CreatePrimitive(PrimitiveType.Plane);
                 demoFloor.name = "Demo Floor";
                 demoFloor.transform.localScale = floorScale;
+                createdFallbackFloor = true;
             }
 
             demoFloor.transform.position = new Vector3(0f, floorY, 0f);
         }
 
-        if (rotatingObject != null)
+        if (rotatingObject != null && (!preserveAssignedSceneLayout || createdFallbackHero))
         {
             PlaceDemoObjectAboveFloor(rotatingObject);
         }
 
-        if (createDirectionalLightIfMissing && FindAnyObjectByType<Light>() == null)
+        if (createDirectionalLightIfMissing && allowFallbackSceneBootstrap && FindAnyObjectByType<Light>() == null)
         {
             GameObject lightObject = new GameObject("Directional Light");
             Light lightComponent = lightObject.AddComponent<Light>();
             lightComponent.type = LightType.Directional;
             lightComponent.intensity = 1.2f;
             lightObject.transform.rotation = Quaternion.Euler(50f, -30f, 0f);
+            createdFallbackLight = true;
         }
 
         ApplyPresentationLookIfNeeded();
@@ -245,6 +376,11 @@ public class DemoManager : MonoBehaviour
     private void NormalizeSceneForDemo()
     {
         if (!normalizeSceneForDemoOnPlay || demoCamera == null || rotatingObject == null)
+        {
+            return;
+        }
+
+        if (preserveAssignedSceneLayout && !createdFallbackHero && !createdFallbackCamera)
         {
             return;
         }
@@ -299,6 +435,38 @@ public class DemoManager : MonoBehaviour
         {
             demoParticleController.SetInputRouter(inputRouter);
             demoParticleController.SetVisualFeedback(demoVisualFeedback);
+            demoParticleController.SetParticleCenter(particleCenter != null ? particleCenter : rotatingObject);
+            demoParticleController.SetOrbitBallParent(orbitBallParent);
+        }
+
+        if (heroPlaceholderController != null)
+        {
+            heroPlaceholderController.SetSceneReferences(songModeManager, demoVisualFeedback);
+        }
+
+        if (cameraViewController != null)
+        {
+            cameraViewController.SetCameraMover(cameraMover);
+            cameraViewController.SetFocusTarget(rotatingObject);
+        }
+
+        if (multiObjectController != null)
+        {
+            multiObjectController.SetCentralObject(rotatingObject);
+            multiObjectController.SetInputRouter(inputRouter);
+            multiObjectController.SetVisualFeedback(demoVisualFeedback);
+        }
+
+        if (songModeManager != null)
+        {
+            songModeManager.SetSceneReferences(
+                inputRouter,
+                rotatingObject,
+                demoVisualFeedback,
+                demoParticleController,
+                cameraViewController,
+                multiObjectController,
+                audioReactiveDriver);
         }
     }
 
@@ -309,19 +477,22 @@ public class DemoManager : MonoBehaviour
             return;
         }
 
-        if (demoCamera != null)
+        if (demoCamera != null && (!preserveAssignedSceneLayout || createdFallbackCamera))
         {
             demoCamera.clearFlags = CameraClearFlags.SolidColor;
             demoCamera.backgroundColor = backgroundColor;
             demoCamera.fieldOfView = 50f;
         }
 
-        if (rotatingObject != null)
+        if (rotatingObject != null && (!preserveAssignedSceneLayout || createdFallbackHero))
         {
-            ApplyColor(rotatingObject.gameObject, cubeColor);
+            if (heroPlaceholderController == null)
+            {
+                ApplyColor(rotatingObject.gameObject, cubeColor);
+            }
         }
 
-        if (demoFloor != null)
+        if (demoFloor != null && (!preserveAssignedSceneLayout || createdFallbackFloor))
         {
             ApplyColor(demoFloor, floorColor);
         }
@@ -347,44 +518,65 @@ public class DemoManager : MonoBehaviour
         targetTransform.position = position;
     }
 
+    private GameObject CreateHeroPlaceholderObject()
+    {
+        GameObject heroObject = new GameObject("Hero Object");
+        heroObject.transform.localScale = cubeScale;
+
+        HeroPlaceholderController placeholder = heroObject.AddComponent<HeroPlaceholderController>();
+        placeholder.BuildPlaceholderIfNeeded();
+        heroPlaceholderController = placeholder;
+
+        return heroObject;
+    }
+
     // Keep shader selection local here so scene polish stays optional and easy to replace later.
     private void ApplyColor(GameObject target, Color color)
     {
-        Renderer renderer = target.GetComponent<Renderer>();
-        if (renderer == null)
+        Renderer[] renderers = target.GetComponentsInChildren<Renderer>(true);
+        if (renderers == null || renderers.Length == 0)
         {
             return;
         }
 
-        Material material = renderer.sharedMaterial;
-        if (material == null || material.name.StartsWith("Default-Material"))
+        for (int i = 0; i < renderers.Length; i++)
         {
-            Shader shader = Shader.Find("Universal Render Pipeline/Lit");
-            if (shader == null)
+            Renderer renderer = renderers[i];
+            if (renderer == null || renderer is ParticleSystemRenderer)
             {
-                shader = Shader.Find("Standard");
+                continue;
             }
 
-            if (shader != null)
+            Material material = renderer.sharedMaterial;
+            if (material == null || material.name.StartsWith("Default-Material"))
             {
-                material = new Material(shader);
-                renderer.material = material;
+                Shader shader = Shader.Find("Universal Render Pipeline/Lit");
+                if (shader == null)
+                {
+                    shader = Shader.Find("Standard");
+                }
+
+                if (shader != null)
+                {
+                    material = new Material(shader);
+                    renderer.material = material;
+                }
             }
-        }
 
-        if (material == null)
-        {
-            return;
-        }
+            if (material == null)
+            {
+                continue;
+            }
 
-        if (material.HasProperty("_BaseColor"))
-        {
-            material.SetColor("_BaseColor", color);
-        }
+            if (material.HasProperty("_BaseColor"))
+            {
+                material.SetColor("_BaseColor", color);
+            }
 
-        if (material.HasProperty("_Color"))
-        {
-            material.SetColor("_Color", color);
+            if (material.HasProperty("_Color"))
+            {
+                material.SetColor("_Color", color);
+            }
         }
     }
 
@@ -405,7 +597,7 @@ public class DemoManager : MonoBehaviour
         float marginX = Mathf.Clamp(overlayScreenOffset.x, 8f, Mathf.Max(8f, scaledScreenWidth - 140f));
         float marginY = Mathf.Clamp(overlayScreenOffset.y, 8f, Mathf.Max(8f, scaledScreenHeight - 120f));
         float maxWidth = Mathf.Min(overlayMaxWidth, scaledScreenWidth - marginX - 16f);
-        Rect area = new Rect(marginX, marginY, maxWidth, 206f);
+        Rect area = new Rect(marginX, marginY, maxWidth, 304f);
         GUI.Box(area, string.Empty);
 
         GUIStyle labelStyle = new GUIStyle(GUI.skin.label)
@@ -417,13 +609,24 @@ public class DemoManager : MonoBehaviour
 
         Rect labelRect = new Rect(area.x + 10f, area.y + 8f, area.width - 20f, area.height - 16f);
         string text =
-            "Controller Demo\n" +
-            $"Mode: {inputRouter.ConfiguredInputModeLabel}   Source: {inputRouter.CurrentInputModeLabel}\n" +
+            "Interactive Song Demo\n" +
+            $"Input Mode: {inputRouter.ConfiguredInputModeLabel}   Source: {inputRouter.CurrentInputModeLabel}\n" +
+            $"Song Mode: {(songModeManager != null ? songModeManager.CurrentModeLabel : "LOVE")}   " +
+            $"Youth State: {(songModeManager != null ? songModeManager.CurrentYouthStateLabel : "-")}   " +
+            $"Camera View: {(songModeManager != null ? songModeManager.CurrentCameraViewLabel : "-")}\n" +
+            $"Motion Intensity: {inputRouter.MotionMagnitude:0.00}   " +
+            $"Audio Energy: {(songModeManager != null ? songModeManager.CurrentAudioEnergy : 0f):0.00}\n" +
+            $"Audio Clip: {(songModeManager != null ? songModeManager.CurrentAudioLabel : "Simulated BPM Only")}\n" +
             $"Device: {inputRouter.ActiveDeviceLabel}\n" +
             $"Sensors: {inputRouter.MobileSensorLabel}\n" +
             $"Phone Rotate: ({inputRouter.PhoneObjectRotation.x:0.00}, {inputRouter.PhoneObjectRotation.y:0.00})   Motion: {inputRouter.PhoneMotionMagnitude:0.00}\n" +
+            $"Phone Camera: Tilt ({inputRouter.PhoneCameraTilt.x:0.00}, {inputRouter.PhoneCameraTilt.y:0.00})   Move ({inputRouter.PhoneCameraTranslation.x:0.00}, {inputRouter.PhoneCameraTranslation.y:0.00})\n" +
+            $"Phone Lift: {inputRouter.PhoneObjectLift:0.00}\n" +
             $"Object Input: ({inputRouter.ObjectRotation.x:0.00}, {inputRouter.ObjectRotation.y:0.00})   Visual: {(demoVisualFeedback != null ? demoVisualFeedback.CurrentIntensity : 0f):0.00}\n" +
-            "Phone: tilt iPhone to pose the cube\n" +
+            $"Particles: {(demoParticleController != null ? demoParticleController.CurrentParticleIntensity : 0f):0.00}   Radius: {(demoParticleController != null ? demoParticleController.CurrentParticleRadius : 0f):0.00}   Orbit: {(demoParticleController != null ? demoParticleController.CurrentOrbitSpeed : 0f):0.00}\n" +
+            "Song Mode: Tab / Gamepad Triangle   Youth State: 1 / 2 / 3 or Left Stick Press\n" +
+            "Camera Views: Q / E or Right Stick Press\n" +
+            "Phone: tilt iPhone to pose the cube, nudge camera tilt/move, roll to lift the cube\n" +
             "Fallback Rotate: Arrow Keys / Left Stick / Face Buttons\n" +
             "Fallback Camera: Right Mouse or Right Stick   Move: WASD / D-Pad / Shoulders / Triggers\n" +
             "Shortcuts: F reset, / overlay";

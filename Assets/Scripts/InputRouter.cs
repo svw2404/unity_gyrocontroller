@@ -48,8 +48,10 @@ public class InputRouter : MonoBehaviour
     [SerializeField, Min(0f)] private float phoneSensorSamplingFrequency = 60f;
     [SerializeField, Min(1f)] private float phoneMaxYawDegrees = 35f;
     [SerializeField, Min(1f)] private float phoneMaxPitchDegrees = 30f;
+    [SerializeField, Min(1f)] private float phoneMaxRollDegrees = 25f;
     [SerializeField, Range(0f, 10f)] private float phoneYawDeadzoneDegrees = 1.25f;
     [SerializeField, Range(0f, 10f)] private float phonePitchDeadzoneDegrees = 1.25f;
+    [SerializeField, Range(0f, 10f)] private float phoneRollDeadzoneDegrees = 1.25f;
     [SerializeField, Min(0f)] private float phoneObjectRotationScale = 1f;
     [SerializeField, Min(0f)] private float phoneAngularVelocityDeadzone = 0.12f;
     [SerializeField, Min(0f)] private float phoneAccelerometerIntensityScale = 0.18f;
@@ -57,6 +59,13 @@ public class InputRouter : MonoBehaviour
     [SerializeField, Min(0f)] private float phoneAngularVelocityIntensityScale = 0.18f;
     [SerializeField, Range(0f, 1f)] private float phonePoseIntensityWeight = 0.35f;
     [SerializeField, Min(0.01f)] private float phoneOutputSmoothTime = 0.1f;
+
+    [Header("Phone Camera Response")]
+    [SerializeField] private bool phoneDrivesCameraTilt = true;
+    [SerializeField] private bool phoneDrivesCameraMovement = true;
+    [SerializeField, Min(0f)] private float phoneCameraTiltScale = 0.40f;
+    [SerializeField, Min(0f)] private float phoneCameraLateralMoveScale = 0.32f;
+    [SerializeField, Min(0f)] private float phoneCameraDepthMoveScale = 0.26f;
 
     private InputAction keyboardObjectRotateAction;
     private InputAction gamepadObjectRotateAction;
@@ -75,9 +84,11 @@ public class InputRouter : MonoBehaviour
 
     private Quaternion phoneReferenceAttitude = Quaternion.identity;
     private bool hasPhoneReference;
+    private float phoneObjectLiftVelocity;
     private float phoneAccelerationBaseline = -1f;
     private Vector2 phoneObjectRotationVelocity;
     private Vector2 phoneCameraTiltVelocity;
+    private Vector2 phoneCameraTranslationVelocity;
     private float phoneMotionVelocity;
 
     public Vector2 ObjectRotation { get; private set; }
@@ -91,7 +102,7 @@ public class InputRouter : MonoBehaviour
     public string CurrentInputModeLabel => GetInputModeLabel(CurrentInputMode);
     public string ActiveInputLabel => CurrentInputModeLabel;
     public bool IsUsingPhoneMotion => CurrentInputMode == InputMode.PhoneMotion;
-    public string ControlPathLabel => IsUsingPhoneMotion ? "Phone Motion -> Cube / Visuals (Camera Locked)" : "Fallback Controls Active";
+    public string ControlPathLabel => IsUsingPhoneMotion ? "Phone Motion -> Cube / Camera / Visuals" : "Fallback Controls Active";
     public string ActiveDeviceLabel { get; private set; } = "Keyboard / Mouse";
     public string ConnectedGamepadLabel { get; private set; } = "No gamepad detected";
 
@@ -108,18 +119,22 @@ public class InputRouter : MonoBehaviour
     public bool IsLegacyGyroAvailable => SystemInfo.supportsGyroscope;
     public bool IsLegacyGyroEnabled => enablePhoneMotion && SystemInfo.supportsGyroscope && Input.gyro.enabled;
     public Vector2 PhoneObjectRotation { get; private set; }
+    public float PhoneObjectLift { get; private set; }
     public Vector2 PhoneCameraTilt { get; private set; }
+    public Vector2 PhoneCameraTranslation { get; private set; }
     public float PhoneMotionMagnitude { get; private set; }
     public string MobileSensorLabel => BuildMobileSensorLabel();
 
     private void Awake()
     {
+        EnsurePhoneMotionDefaults();
         CreateActionsIfNeeded();
         RefreshPhoneSensorDevices();
     }
 
     private void OnEnable()
     {
+        EnsurePhoneMotionDefaults();
         CreateActionsIfNeeded();
         EnableActions();
         RefreshPhoneSensorDevices();
@@ -147,6 +162,89 @@ public class InputRouter : MonoBehaviour
     {
         UpdateCursorState();
         UpdateOutputs();
+    }
+
+    private void EnsurePhoneMotionDefaults()
+    {
+        if (phoneMaxYawDegrees <= 0f)
+        {
+            phoneMaxYawDegrees = 35f;
+        }
+
+        if (phoneMaxPitchDegrees <= 0f)
+        {
+            phoneMaxPitchDegrees = 30f;
+        }
+
+        if (phoneMaxRollDegrees <= 0f)
+        {
+            phoneMaxRollDegrees = 25f;
+        }
+
+        if (phoneYawDeadzoneDegrees <= 0f)
+        {
+            phoneYawDeadzoneDegrees = 0.75f;
+        }
+
+        if (phonePitchDeadzoneDegrees <= 0f)
+        {
+            phonePitchDeadzoneDegrees = 0.75f;
+        }
+
+        if (phoneRollDeadzoneDegrees <= 0f)
+        {
+            phoneRollDeadzoneDegrees = 0.75f;
+        }
+
+        if (phoneObjectRotationScale <= 0f)
+        {
+            phoneObjectRotationScale = 1f;
+        }
+
+        if (phoneAngularVelocityDeadzone < 0f)
+        {
+            phoneAngularVelocityDeadzone = 0.12f;
+        }
+
+        if (phoneAccelerometerIntensityScale < 0f)
+        {
+            phoneAccelerometerIntensityScale = 0.18f;
+        }
+
+        if (phoneAccelerationDeadzone < 0f)
+        {
+            phoneAccelerationDeadzone = 0.08f;
+        }
+
+        if (phoneAngularVelocityIntensityScale < 0f)
+        {
+            phoneAngularVelocityIntensityScale = 0.18f;
+        }
+
+        if (phonePoseIntensityWeight <= 0f)
+        {
+            phonePoseIntensityWeight = 0.35f;
+        }
+
+        if (phoneOutputSmoothTime <= 0f)
+        {
+            phoneOutputSmoothTime = 0.08f;
+        }
+
+        if (phoneCameraTiltScale < 0f)
+        {
+            phoneCameraTiltScale = 0.40f;
+        }
+
+        if (phoneCameraLateralMoveScale < 0f)
+        {
+            phoneCameraLateralMoveScale = 0.32f;
+        }
+
+        if (phoneCameraDepthMoveScale < 0f)
+        {
+            phoneCameraDepthMoveScale = 0.26f;
+        }
     }
 
     private void CreateActionsIfNeeded()
@@ -323,7 +421,11 @@ public class InputRouter : MonoBehaviour
             Mathf.Max(gamepadMove.magnitude, Mathf.Max(gamepadTilt.magnitude, controllerGyroTilt.magnitude)));
         float phoneMagnitude = Mathf.Max(
             PhoneObjectRotation.magnitude,
-            Mathf.Max(PhoneCameraTilt.magnitude, PhoneMotionMagnitude));
+            Mathf.Max(
+                Mathf.Abs(PhoneObjectLift),
+                Mathf.Max(
+                    Mathf.Max(PhoneCameraTilt.magnitude, PhoneCameraTranslation.magnitude),
+                    PhoneMotionMagnitude)));
 
         CurrentInputMode = ResolveCurrentInputMode(keyboardMouseMagnitude, gamepadMagnitude, phoneMagnitude);
         ActiveDeviceLabel = ResolveActiveDeviceLabel(CurrentInputMode, mouseTilt.magnitude);
@@ -364,17 +466,19 @@ public class InputRouter : MonoBehaviour
             case InputMode.PhoneMotion:
                 if (HasUsablePhoneMotion())
                 {
-                    return Vector2.zero;
+                    return CombineNormalized(PhoneCameraTilt, fallbackTilt);
                 }
 
                 return fallbackTilt;
             default:
-                return fallbackTilt;
+                return CombineNormalized(fallbackTilt, PhoneCameraTilt);
         }
     }
 
     private Vector2 ResolveCameraTranslation(Vector2 keyboardMove, Vector2 gamepadMove)
     {
+        Vector2 fallbackMove = CombineNormalized(keyboardMove, gamepadMove);
+
         switch (inputMode)
         {
             case InputMode.KeyboardMouse:
@@ -384,13 +488,13 @@ public class InputRouter : MonoBehaviour
             case InputMode.PhoneMotion:
                 if (HasUsablePhoneMotion())
                 {
-                    return Vector2.zero;
+                    return CombineNormalized(PhoneCameraTranslation, fallbackMove);
                 }
 
-                return CombineNormalized(keyboardMove, gamepadMove);
+                return fallbackMove;
             case InputMode.Auto:
             default:
-                return CombineNormalized(keyboardMove, gamepadMove);
+                return CombineNormalized(fallbackMove, PhoneCameraTranslation);
         }
     }
 
@@ -408,7 +512,9 @@ public class InputRouter : MonoBehaviour
         float gamepadMagnitude = Mathf.Max(
             gamepadRotate.magnitude,
             Mathf.Max(gamepadMove.magnitude, gamepadTilt.magnitude));
-        float phonePoseMagnitude = Mathf.Max(PhoneObjectRotation.magnitude, PhoneCameraTilt.magnitude) * phonePoseIntensityWeight;
+        float phonePoseMagnitude = Mathf.Max(
+            Mathf.Max(PhoneObjectRotation.magnitude, Mathf.Abs(PhoneObjectLift)),
+            Mathf.Max(PhoneCameraTilt.magnitude, PhoneCameraTranslation.magnitude)) * phonePoseIntensityWeight;
 
         switch (inputMode)
         {
@@ -433,7 +539,9 @@ public class InputRouter : MonoBehaviour
     private void UpdatePhoneMotionOutputs()
     {
         Vector2 targetPhoneObjectRotation = Vector2.zero;
+        float targetPhoneObjectLift = 0f;
         Vector2 targetPhoneCameraTilt = Vector2.zero;
+        Vector2 targetPhoneCameraTranslation = Vector2.zero;
         float targetPhoneMotionMagnitude = 0f;
 
         if (enablePhoneMotion)
@@ -443,7 +551,7 @@ public class InputRouter : MonoBehaviour
 
             if (hasAttitude)
             {
-                // Phone orientation now drives the object directly; camera tilt stays on the existing fallback controls.
+                // Reuse one relative phone pose to drive object rotation plus a smaller camera response.
                 Vector2 normalizedPhoneRotation = ApplyPhoneRotationDeadzone(
                     new Vector2(
                         NormalizeAngleToInput(relativePhoneAngles.y, phoneMaxYawDegrees),
@@ -451,6 +559,22 @@ public class InputRouter : MonoBehaviour
                 targetPhoneObjectRotation = ScaleVector(
                     normalizedPhoneRotation,
                     phoneObjectRotationScale);
+                targetPhoneObjectLift = ApplyPhoneRollDeadzone(
+                    NormalizeAngleToInput(relativePhoneAngles.z, phoneMaxRollDegrees));
+
+                if (phoneDrivesCameraTilt)
+                {
+                    targetPhoneCameraTilt = ScaleVector(normalizedPhoneRotation, phoneCameraTiltScale);
+                }
+
+                if (phoneDrivesCameraMovement)
+                {
+                    targetPhoneCameraTranslation = Vector2.ClampMagnitude(
+                        new Vector2(
+                            targetPhoneObjectLift * phoneCameraLateralMoveScale,
+                            -normalizedPhoneRotation.y * phoneCameraDepthMoveScale),
+                        1f);
+                }
             }
             else
             {
@@ -500,7 +624,9 @@ public class InputRouter : MonoBehaviour
 
             targetPhoneMotionMagnitude = Mathf.Max(
                 targetPhoneMotionMagnitude,
-                Mathf.Max(targetPhoneObjectRotation.magnitude, targetPhoneCameraTilt.magnitude) * phonePoseIntensityWeight);
+                Mathf.Max(
+                    Mathf.Max(targetPhoneObjectRotation.magnitude, Mathf.Abs(targetPhoneObjectLift)),
+                    Mathf.Max(targetPhoneCameraTilt.magnitude, targetPhoneCameraTranslation.magnitude)) * phonePoseIntensityWeight);
         }
         else
         {
@@ -515,11 +641,28 @@ public class InputRouter : MonoBehaviour
                 phoneOutputSmoothTime),
             1f);
 
+        PhoneObjectLift = Mathf.Clamp(
+            Mathf.SmoothDamp(
+                PhoneObjectLift,
+                targetPhoneObjectLift,
+                ref phoneObjectLiftVelocity,
+                phoneOutputSmoothTime),
+            -1f,
+            1f);
+
         PhoneCameraTilt = Vector2.ClampMagnitude(
             Vector2.SmoothDamp(
                 PhoneCameraTilt,
                 targetPhoneCameraTilt,
                 ref phoneCameraTiltVelocity,
+                phoneOutputSmoothTime),
+            1f);
+
+        PhoneCameraTranslation = Vector2.ClampMagnitude(
+            Vector2.SmoothDamp(
+                PhoneCameraTranslation,
+                targetPhoneCameraTranslation,
+                ref phoneCameraTranslationVelocity,
                 phoneOutputSmoothTime),
             1f);
 
@@ -601,10 +744,14 @@ public class InputRouter : MonoBehaviour
         phoneReferenceAttitude = Quaternion.identity;
         phoneAccelerationBaseline = -1f;
         PhoneObjectRotation = Vector2.zero;
+        PhoneObjectLift = 0f;
         PhoneCameraTilt = Vector2.zero;
+        PhoneCameraTranslation = Vector2.zero;
         PhoneMotionMagnitude = 0f;
         phoneObjectRotationVelocity = Vector2.zero;
+        phoneObjectLiftVelocity = 0f;
         phoneCameraTiltVelocity = Vector2.zero;
+        phoneCameraTranslationVelocity = Vector2.zero;
         phoneMotionVelocity = 0f;
     }
 
@@ -810,6 +957,12 @@ public class InputRouter : MonoBehaviour
         return new Vector2(
             ApplySignedDeadzone(normalizedPhoneRotation.x, yawDeadzone),
             ApplySignedDeadzone(normalizedPhoneRotation.y, pitchDeadzone));
+    }
+
+    private float ApplyPhoneRollDeadzone(float normalizedPhoneRoll)
+    {
+        float rollDeadzone = phoneMaxRollDegrees <= 0f ? 0f : Mathf.Clamp01(phoneRollDeadzoneDegrees / phoneMaxRollDegrees);
+        return ApplySignedDeadzone(normalizedPhoneRoll, rollDeadzone);
     }
 
     private static float ApplySignedDeadzone(float value, float deadzone)

@@ -1,8 +1,32 @@
+using System;
+using System.Collections.Generic;
 using UnityEngine;
 
 [DisallowMultipleComponent]
 public class DemoVisualFeedback : MonoBehaviour
 {
+    [Serializable]
+    public struct VisualTuning
+    {
+        public Color surfaceBaseColor;
+        public Color peakColor;
+        public float idleBaselineIntensity;
+        public float idlePulseIntensity;
+        public float inputIntensityMultiplier;
+        public float audioEnergyWeight;
+        public float maxAudioContribution;
+        public float intensitySmoothTime;
+        public float simulatedBpm;
+        public float rhythmPulseStrength;
+        public float rhythmScaleStrength;
+        public float rhythmBrightnessStrength;
+        public float idleBreathSpeed;
+        public float idleBreathScale;
+        public float inputScaleStrength;
+        public float colorBlendStrength;
+        public float emissionStrength;
+    }
+
     [SerializeField] private InputRouter inputRouter;
     [SerializeField] private Renderer targetRenderer;
 
@@ -10,6 +34,8 @@ public class DemoVisualFeedback : MonoBehaviour
     [SerializeField, Range(0f, 0.5f)] private float idleBaselineIntensity = 0.08f;
     [SerializeField, Range(0f, 1f)] private float idlePulseIntensity = 0.05f;
     [SerializeField, Min(0f)] private float inputIntensityMultiplier = 1f;
+    [SerializeField, Min(0f)] private float audioEnergyWeight = 0.45f;
+    [SerializeField, Range(0f, 1f)] private float maxAudioContribution = 0.2f;
     [SerializeField, Min(0.01f)] private float intensitySmoothTime = 0.12f;
 
     [Header("Rhythm Simulation")]
@@ -31,12 +57,17 @@ public class DemoVisualFeedback : MonoBehaviour
     public float CurrentIntensity { get; private set; }
     public float CurrentInteractionIntensity { get; private set; }
     public float CurrentRhythmPulse { get; private set; }
+    public float ExternalAudioEnergy => externalAudioEnergy;
 
     private Vector3 baseScale;
     private float smoothedMotion;
     private float motionVelocity;
-    private Material runtimeMaterial;
+    private float externalAudioEnergy;
+    private readonly List<Material> runtimeMaterials = new List<Material>();
+    private readonly List<Color> baseColors = new List<Color>();
     private Color baseColor = Color.white;
+    private VisualTuning defaultTuning;
+    private bool hasDefaultTuning;
 
     private static readonly int BaseColorId = Shader.PropertyToID("_BaseColor");
     private static readonly int ColorId = Shader.PropertyToID("_Color");
@@ -62,6 +93,8 @@ public class DemoVisualFeedback : MonoBehaviour
 
         baseScale = transform.localScale;
         CacheMaterialState();
+        defaultTuning = CaptureCurrentTuning();
+        hasDefaultTuning = true;
     }
 
     private void OnEnable()
@@ -69,17 +102,25 @@ public class DemoVisualFeedback : MonoBehaviour
         baseScale = transform.localScale;
         smoothedMotion = 0f;
         motionVelocity = 0f;
+        externalAudioEnergy = 0f;
         CurrentInteractionIntensity = idleBaselineIntensity;
         CurrentIntensity = idleBaselineIntensity;
         CurrentRhythmPulse = 0f;
-        ApplyVisuals(CurrentIntensity, 0f, 0f);
+        ApplyVisuals(CurrentIntensity, 0f, 0f, 0f);
     }
 
     private void Start()
     {
         baseScale = transform.localScale;
         CacheMaterialState();
-        ApplyVisuals(CurrentIntensity, 0f, CurrentRhythmPulse);
+
+        if (!hasDefaultTuning)
+        {
+            defaultTuning = CaptureCurrentTuning();
+            hasDefaultTuning = true;
+        }
+
+        ApplyVisuals(CurrentIntensity, 0f, CurrentRhythmPulse, 0f);
     }
 
     private void Update()
@@ -92,19 +133,22 @@ public class DemoVisualFeedback : MonoBehaviour
             intensitySmoothTime);
 
         float idleWave = 0.5f + 0.5f * Mathf.Sin(Time.time * idleBreathSpeed * Mathf.PI * 2f);
-        float idleIntensity = idleBaselineIntensity + idleWave * idlePulseIntensity;
-        float motionIntensity = smoothedMotion * inputIntensityMultiplier;
-        CurrentInteractionIntensity = Mathf.Clamp01(idleIntensity + motionIntensity);
+        float idlePulseContribution = idleBaselineIntensity + idleWave * idlePulseIntensity;
+        float motionContribution = smoothedMotion * inputIntensityMultiplier;
+        float audioEnergyContribution = GetAudioEnergyContribution();
+        CurrentInteractionIntensity = Mathf.Clamp01(idlePulseContribution + motionContribution + audioEnergyContribution);
 
         float beatsPerSecond = simulatedBpm / 60f;
         CurrentRhythmPulse = 0.5f + 0.5f * Mathf.Sin(Time.time * beatsPerSecond * Mathf.PI * 2f);
+        float rhythmContribution = CurrentRhythmPulse * rhythmPulseStrength;
+        CurrentIntensity = Mathf.Clamp01(
+            idlePulseContribution +
+            rhythmContribution +
+            motionContribution +
+            audioEnergyContribution);
 
-        // Make the simulated beat more noticeable when the performer is interacting, while still present at idle.
-        float rhythmCarrier = Mathf.Lerp(0.35f, 1f, smoothedMotion);
-        float rhythmContribution = CurrentRhythmPulse * rhythmPulseStrength * rhythmCarrier;
-        CurrentIntensity = Mathf.Clamp01(CurrentInteractionIntensity + rhythmContribution);
-
-        ApplyVisuals(CurrentIntensity, idleWave, CurrentRhythmPulse);
+        float combinedReactiveEnergy = Mathf.Clamp01(motionContribution + audioEnergyContribution);
+        ApplyVisuals(CurrentIntensity, idleWave, CurrentRhythmPulse, combinedReactiveEnergy);
     }
 
     public void SetInputRouter(InputRouter router)
@@ -112,58 +156,165 @@ public class DemoVisualFeedback : MonoBehaviour
         inputRouter = router;
     }
 
+    public void SetExternalAudioEnergy(float audioEnergy)
+    {
+        externalAudioEnergy = Mathf.Clamp01(audioEnergy);
+    }
+
+    public void ApplyRuntimeTuning(VisualTuning tuning)
+    {
+        baseColor = tuning.surfaceBaseColor;
+        peakColor = tuning.peakColor;
+        idleBaselineIntensity = Mathf.Clamp(tuning.idleBaselineIntensity, 0f, 0.5f);
+        idlePulseIntensity = Mathf.Clamp01(tuning.idlePulseIntensity);
+        inputIntensityMultiplier = Mathf.Max(0f, tuning.inputIntensityMultiplier);
+        audioEnergyWeight = Mathf.Max(0f, tuning.audioEnergyWeight);
+        maxAudioContribution = Mathf.Clamp01(tuning.maxAudioContribution);
+        intensitySmoothTime = Mathf.Max(0.01f, tuning.intensitySmoothTime);
+        simulatedBpm = Mathf.Max(1f, tuning.simulatedBpm);
+        rhythmPulseStrength = Mathf.Clamp01(tuning.rhythmPulseStrength);
+        rhythmScaleStrength = Mathf.Max(0f, tuning.rhythmScaleStrength);
+        rhythmBrightnessStrength = Mathf.Clamp01(tuning.rhythmBrightnessStrength);
+        idleBreathSpeed = Mathf.Max(0f, tuning.idleBreathSpeed);
+        idleBreathScale = Mathf.Max(0f, tuning.idleBreathScale);
+        inputScaleStrength = Mathf.Max(0f, tuning.inputScaleStrength);
+        colorBlendStrength = Mathf.Clamp01(tuning.colorBlendStrength);
+        emissionStrength = Mathf.Max(0f, tuning.emissionStrength);
+        float combinedReactiveEnergy = Mathf.Clamp01(
+            smoothedMotion * inputIntensityMultiplier +
+            GetAudioEnergyContribution());
+        ApplyVisuals(CurrentIntensity, 0f, CurrentRhythmPulse, combinedReactiveEnergy);
+    }
+
+    public void ResetRuntimeTuning()
+    {
+        if (!hasDefaultTuning)
+        {
+            return;
+        }
+
+        ApplyRuntimeTuning(defaultTuning);
+    }
+
+    private VisualTuning CaptureCurrentTuning()
+    {
+        return new VisualTuning
+        {
+            surfaceBaseColor = baseColor,
+            peakColor = peakColor,
+            idleBaselineIntensity = idleBaselineIntensity,
+            idlePulseIntensity = idlePulseIntensity,
+            inputIntensityMultiplier = inputIntensityMultiplier,
+            audioEnergyWeight = audioEnergyWeight,
+            maxAudioContribution = maxAudioContribution,
+            intensitySmoothTime = intensitySmoothTime,
+            simulatedBpm = simulatedBpm,
+            rhythmPulseStrength = rhythmPulseStrength,
+            rhythmScaleStrength = rhythmScaleStrength,
+            rhythmBrightnessStrength = rhythmBrightnessStrength,
+            idleBreathSpeed = idleBreathSpeed,
+            idleBreathScale = idleBreathScale,
+            inputScaleStrength = inputScaleStrength,
+            colorBlendStrength = colorBlendStrength,
+            emissionStrength = emissionStrength
+        };
+    }
+
     private void CacheMaterialState()
     {
-        if (targetRenderer == null)
+        runtimeMaterials.Clear();
+        baseColors.Clear();
+
+        Renderer[] renderers = GetComponentsInChildren<Renderer>(true);
+        for (int i = 0; i < renderers.Length; i++)
         {
-            return;
+            Renderer renderer = renderers[i];
+            if (renderer == null || renderer is ParticleSystemRenderer)
+            {
+                continue;
+            }
+
+            if (renderer.GetComponentInParent<DemoParticleController>() != null)
+            {
+                continue;
+            }
+
+            Material material = renderer.material;
+            if (material == null)
+            {
+                continue;
+            }
+
+            runtimeMaterials.Add(material);
+
+            Color rendererBaseColor = Color.white;
+            if (material.HasProperty(BaseColorId))
+            {
+                rendererBaseColor = material.GetColor(BaseColorId);
+            }
+            else if (material.HasProperty(ColorId))
+            {
+                rendererBaseColor = material.GetColor(ColorId);
+            }
+
+            baseColors.Add(rendererBaseColor);
         }
 
-        runtimeMaterial = targetRenderer.material;
-        if (runtimeMaterial == null)
+        if (baseColors.Count > 0)
         {
-            return;
-        }
-
-        if (runtimeMaterial.HasProperty(BaseColorId))
-        {
-            baseColor = runtimeMaterial.GetColor(BaseColorId);
-        }
-        else if (runtimeMaterial.HasProperty(ColorId))
-        {
-            baseColor = runtimeMaterial.GetColor(ColorId);
+            baseColor = baseColors[0];
         }
     }
 
-    private void ApplyVisuals(float intensity, float idleWave, float rhythmPulse)
+    private void ApplyVisuals(float intensity, float idleWave, float rhythmPulse, float combinedReactiveEnergy)
     {
         float idleScaleOffset = Mathf.Lerp(-idleBreathScale, idleBreathScale, idleWave);
-        float motionScaleOffset = smoothedMotion * inputScaleStrength;
+        float motionScaleOffset = combinedReactiveEnergy * inputScaleStrength;
         float rhythmScaleOffset = rhythmPulse * rhythmScaleStrength * Mathf.Lerp(0.4f, 1f, CurrentInteractionIntensity);
         float scaleMultiplier = 1f + idleScaleOffset + motionScaleOffset + rhythmScaleOffset;
         transform.localScale = baseScale * scaleMultiplier;
 
-        if (runtimeMaterial == null)
+        if (runtimeMaterials.Count == 0)
         {
             return;
         }
 
-        Color surfaceColor = Color.Lerp(baseColor, peakColor, intensity * colorBlendStrength);
-        if (runtimeMaterial.HasProperty(BaseColorId))
+        for (int i = 0; i < runtimeMaterials.Count; i++)
         {
-            runtimeMaterial.SetColor(BaseColorId, surfaceColor);
-        }
+            Material material = runtimeMaterials[i];
+            if (material == null)
+            {
+                continue;
+            }
 
-        if (runtimeMaterial.HasProperty(ColorId))
-        {
-            runtimeMaterial.SetColor(ColorId, surfaceColor);
-        }
+            Color sourceColor = baseColor;
+            if (i < baseColors.Count)
+            {
+                sourceColor = Color.Lerp(baseColors[i], baseColor, 0.45f);
+            }
 
-        if (runtimeMaterial.HasProperty(EmissionColorId))
-        {
-            runtimeMaterial.EnableKeyword("_EMISSION");
-            float rhythmicBrightness = intensity + rhythmPulse * rhythmBrightnessStrength;
-            runtimeMaterial.SetColor(EmissionColorId, surfaceColor * (rhythmicBrightness * emissionStrength));
+            Color surfaceColor = Color.Lerp(sourceColor, peakColor, intensity * colorBlendStrength);
+            if (material.HasProperty(BaseColorId))
+            {
+                material.SetColor(BaseColorId, surfaceColor);
+            }
+
+            if (material.HasProperty(ColorId))
+            {
+                material.SetColor(ColorId, surfaceColor);
+            }
+
+            if (material.HasProperty(EmissionColorId))
+            {
+                material.EnableKeyword("_EMISSION");
+                float rhythmicBrightness = intensity + rhythmPulse * rhythmBrightnessStrength + GetAudioEnergyContribution();
+                material.SetColor(EmissionColorId, surfaceColor * (rhythmicBrightness * emissionStrength));
+            }
         }
+    }
+
+    private float GetAudioEnergyContribution()
+    {
+        return Mathf.Min(externalAudioEnergy * audioEnergyWeight, maxAudioContribution);
     }
 }

@@ -21,12 +21,17 @@ public class ObjectRotator : MonoBehaviour
     [SerializeField] private bool phoneUsesDirectPose = true;
     [SerializeField] private float phoneYawRange = 80f;
     [SerializeField] private float phonePitchRange = 65f;
+    [SerializeField] private float phoneHeightRange = 1f;
+    [SerializeField, Range(0f, 1f)] private float phoneLiftRotationLockThreshold = 0.45f;
+    [SerializeField, Range(0f, 1f)] private float phoneLiftRotationReleaseThreshold = 0.25f;
     [SerializeField, Min(1f)] private float phonePoseSharpness = 10f;
 
     private Vector2 smoothedInput;
     private Vector2 inputVelocity;
     private Quaternion accumulatedRotation;
     private Quaternion phoneNeutralRotation;
+    private Vector3 phoneNeutralPosition;
+    private bool phoneLiftRotationLockActive;
     private bool wasUsingPhoneMotion;
 
     private void Reset()
@@ -34,6 +39,8 @@ public class ObjectRotator : MonoBehaviour
         inputRouter = FindAnyObjectByType<InputRouter>();
         enablePitchInput = true;
         clampPitch = false;
+        phoneUsesDirectPose = true;
+        EnsurePhoneMotionDefaults();
     }
 
     private void Awake()
@@ -41,6 +48,8 @@ public class ObjectRotator : MonoBehaviour
         // Older serialized scene instances may still have this off from a previous demo version.
         enablePitchInput = true;
         clampPitch = false;
+        phoneUsesDirectPose = true;
+        EnsurePhoneMotionDefaults();
 
         if (inputRouter == null)
         {
@@ -52,6 +61,7 @@ public class ObjectRotator : MonoBehaviour
 
     private void OnEnable()
     {
+        EnsurePhoneMotionDefaults();
         smoothedInput = Vector2.zero;
         inputVelocity = Vector2.zero;
         SyncRotationFromTransform();
@@ -84,16 +94,25 @@ public class ObjectRotator : MonoBehaviour
             {
                 phoneNeutralRotation = transform.localRotation;
                 accumulatedRotation = transform.localRotation;
+                phoneLiftRotationLockActive = false;
             }
 
-            Quaternion targetRotation = phoneNeutralRotation *
-                Quaternion.Euler(
-                    -blendedInput.y * phonePitchRange,
-                    blendedInput.x * phoneYawRange,
-                    0f);
+            UpdatePhoneLiftRotationLock(blendedInput, Mathf.Abs(inputRouter.PhoneObjectLift));
 
+            Vector3 targetPosition = phoneNeutralPosition + Vector3.up * (inputRouter.PhoneObjectLift * phoneHeightRange);
             float blend = 1f - Mathf.Exp(-phonePoseSharpness * Time.deltaTime);
-            accumulatedRotation = Quaternion.Slerp(accumulatedRotation, targetRotation, blend);
+
+            if (!phoneLiftRotationLockActive)
+            {
+                Quaternion targetRotation = phoneNeutralRotation *
+                    Quaternion.Euler(
+                        -blendedInput.y * phonePitchRange,
+                        blendedInput.x * phoneYawRange,
+                        0f);
+                accumulatedRotation = Quaternion.Slerp(accumulatedRotation, targetRotation, blend);
+            }
+
+            transform.localPosition = Vector3.Lerp(transform.localPosition, targetPosition, blend);
             transform.localRotation = accumulatedRotation;
             wasUsingPhoneMotion = true;
             return;
@@ -101,7 +120,9 @@ public class ObjectRotator : MonoBehaviour
 
         if (wasUsingPhoneMotion)
         {
+            transform.localPosition = phoneNeutralPosition;
             accumulatedRotation = transform.localRotation;
+            phoneLiftRotationLockActive = false;
             wasUsingPhoneMotion = false;
         }
 
@@ -124,6 +145,7 @@ public class ObjectRotator : MonoBehaviour
         SyncRotationFromTransform();
         smoothedInput = Vector2.zero;
         inputVelocity = Vector2.zero;
+        phoneLiftRotationLockActive = false;
         wasUsingPhoneMotion = false;
     }
 
@@ -131,5 +153,72 @@ public class ObjectRotator : MonoBehaviour
     {
         accumulatedRotation = transform.localRotation;
         phoneNeutralRotation = transform.localRotation;
+        phoneNeutralPosition = transform.localPosition;
+    }
+
+    private void EnsurePhoneMotionDefaults()
+    {
+        if (phoneYawRange <= 0f)
+        {
+            phoneYawRange = 80f;
+        }
+
+        if (phonePitchRange <= 0f)
+        {
+            phonePitchRange = 65f;
+        }
+
+        if (Mathf.Approximately(phoneHeightRange, 0f))
+        {
+            phoneHeightRange = 1f;
+        }
+
+        if (phonePoseSharpness < 1f)
+        {
+            phonePoseSharpness = 10f;
+        }
+
+        if (phoneLiftRotationLockThreshold <= 0f)
+        {
+            phoneLiftRotationLockThreshold = 0.45f;
+        }
+
+        if (phoneLiftRotationReleaseThreshold <= 0f)
+        {
+            phoneLiftRotationReleaseThreshold = 0.25f;
+        }
+
+        if (phoneLiftRotationReleaseThreshold >= phoneLiftRotationLockThreshold)
+        {
+            phoneLiftRotationReleaseThreshold = Mathf.Max(0.05f, phoneLiftRotationLockThreshold - 0.1f);
+        }
+    }
+
+    // When the performer clearly rolls the phone to lift the cube, freeze rotation at the current pose.
+    private void UpdatePhoneLiftRotationLock(Vector2 blendedInput, float liftMagnitude)
+    {
+        if (!phoneLiftRotationLockActive)
+        {
+            if (liftMagnitude >= phoneLiftRotationLockThreshold)
+            {
+                accumulatedRotation = transform.localRotation;
+                phoneLiftRotationLockActive = true;
+            }
+
+            return;
+        }
+
+        if (liftMagnitude > phoneLiftRotationReleaseThreshold)
+        {
+            return;
+        }
+
+        Quaternion currentPhonePose = Quaternion.Euler(
+            -blendedInput.y * phonePitchRange,
+            blendedInput.x * phoneYawRange,
+            0f);
+        phoneNeutralRotation = transform.localRotation * Quaternion.Inverse(currentPhonePose);
+        accumulatedRotation = transform.localRotation;
+        phoneLiftRotationLockActive = false;
     }
 }
